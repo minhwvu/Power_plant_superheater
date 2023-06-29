@@ -1,0 +1,328 @@
+import pyomo.environ as pyo
+from pyomo.network import Arc
+import matplotlib.pyplot as plt
+import argparse
+_log = idaeslog.getLogger(__name__)
+
+import pandas as pd
+from pandas import ExcelWriter
+from pandas import ExcelFile
+
+df_data = \
+pd.read_excel(r'C:\Users\minh2\OneDrive\Desktop\Header\PSH_header_simulation\plant_dyn_JM\plant_dyn_JM.xlsx',sheet_name ='5pct_per_min_rerun')
+
+# data_export = df_data['drum_von_Mises_P1']
+
+# calculate_allowable_cycles(m_dyn,plot_data)
+
+# def calculate_allowable_cycles(m,pd):
+# calculate number of allowable cycles for drum
+parser = argparse.ArgumentParser(description='Select case to simulate')
+parser.add_argument("--case",
+                choices=["drum", "header"],
+                default="drum",
+                help="Case to simulate")
+args = parser.parse_args()
+if args.case == "drum":
+    # data_export = pd['drum_Tresca_equi_stress_last']
+    delta_s12 = df_data['drum_delta_sigma_r_theta_outer']
+    delta_s23 = pd['drum_delta_sigma_theta_z_outer']
+    delta_s31 = pd['drum_delta_sigma_z_r_outer']
+    drum_prin_struc_radial = pd['prin_radial_last']
+    drum_prin_struc_circumferential = pd['drum_prin_last']
+    drum_prin_struc_axial = pd['prin_axial_last']
+    # n = len(pd['drum_Tresca_equi_stress_last'])
+    delta_sigma_D =  400             # the thermal endurance limit, Table 18.10, EN 13445, page 502
+    delta_sigma_cut = 270            # the cut-off limit, Table 18.10, EN 13445, page 502
+    Rm = (590+620)/2            # Tensile strength [N/mm2]
+    Rp = (330+360)/2            # the yield strength of material
+    T_max = 360                 # the metal temperature during the moment of the highest stress [C]
+    T_min = 310                 # the metal temperature during the moment of lowest stress [C]
+    K_t =  3.0                  # Thermal stress correction factor
+    Rz = 50                     # the peak-to-valley height (micrometer), 50 for machine, 10 for ground, free of notches
+    RO = pyo.value(m.fs_main.fs_blr.aDrum.r.last())
+    RI = pyo.value(m.fs_main.fs_blr.aDrum.r.first())
+    thickness = pyo.value(m.fs_main.fs_blr.aDrum.thickness_drum)
+else:
+    data_export = pd['PSH_header_crotch_corner']
+    n = len(pd['PSH_header_crotch_corner'])
+    delta_sigma_D =  273             # the thermal endurance limit, Table 18.10, EN 13445, page 502
+    delta_sigma_cut = 184            # the cut-off limit, Table 18.10, EN 13445, page 502
+    Rm = 380                    # Tensile strength [N/mm2]
+    Rp = 230                    # the yield strength of material
+    T_max = (727.3282-273.15)                 # the metal temperature during the moment of the highest stress [C]
+    T_min = (714.2341-273.15)                 # the metal temperature during the moment of lowest stress [C]
+    K_t =  3.0                  # Thermal stress correction factor
+    Rz = 50                     # the peak-to-valley height (micrometer), 50 for machine, 10 for ground, free of notches
+
+    RO = pyo.value(m.fs_main.fs_blr.aPSH.ro_head)     # outside radius
+    RI = pyo.value(m.fs_main.fs_blr.aPSH.ri_head)     # inside radius
+    thickness = pyo.value(m.fs_main.fs_blr.aPSH.thickness_head) # thickness
+
+def max_value_find(data_export,n):
+    max = data_export[0]
+    for i in range(1,n):
+        if data_export[i]>max:
+            max = data_export[i]
+    return max
+
+def min_value_find(data_export,n):
+    min = data_export[0]
+    for i in range(1,n):
+        if data_export[i]<min:
+            min = data_export[i]
+    return min
+
+if args.case == "drum":
+    # calculate max-min
+    n_s12 = len(delta_s12)
+    delta_s12_max = max_value_find(delta_s12,n_s12)
+    delta_s12_min = min_value_find(delta_s12,n_s12)
+    s12 = pyo.value(abs(delta_s12_max-delta_s12_min))
+
+    n_s23 = len(delta_s23)
+    delta_s23_max = max_value_find(delta_s23,n_s23)
+    delta_s23_min = min_value_find(delta_s23,n_s23)
+    s23 = pyo.value(abs(delta_s23_max-delta_s23_min))
+
+    n_s31 = len(delta_s31)
+    delta_s31_max = max_value_find(delta_s31,n_s31)
+    delta_s31_min = min_value_find(delta_s31,n_s31)
+    s31 = pyo.value(abs(delta_s31_max-delta_s31_min))
+
+    Tresca = max(s12, s23, s31)
+    print('Tresca equivalent stress =', pyo.value(Tresca))
+    if s12 > s23 and s12 > s31:
+        Ans_max = delta_s12_max
+        Ans_min = delta_s12_min
+        delta_sigma = Ans_max - Ans_min
+        # calculate max, min for mean equivalent stress
+        n_radial = len(drum_prin_struc_radial)
+        n_circumferential = len(drum_prin_struc_circumferential)
+        max_radial = max_value_find(drum_prin_struc_radial,n_radial)
+        max_circumferential = max_value_find(drum_prin_struc_circumferential,n_circumferential)
+        min_radial = min_value_find(drum_prin_struc_radial,n_radial)
+        min_circumferential = min_value_find(drum_prin_struc_circumferential,n_circumferential)
+        sigma_mean = pyo.value(0.5*((max_radial+max_circumferential)+(min_radial+min_circumferential)))
+    elif s23 > s12 and s23 > s31:
+        Ans_max = delta_s23_max
+        Ans_min = delta_s23_min
+        delta_sigma = Ans_max - Ans_min
+        # calculate max, min for mean equivalent stress
+        n_axial = len(drum_prin_struc_axial)
+        n_circumferential = len(drum_prin_struc_circumferential)
+        max_axial = max_value_find(drum_prin_struc_axial,n_axial)
+        max_circumferential = max_value_find(drum_prin_struc_circumferential,n_circumferential)
+        min_axial = min_value_find(drum_prin_struc_axial,n_axial)
+        min_circumferential = min_value_find(drum_prin_struc_circumferential,n_circumferential)
+        sigma_mean = pyo.value(0.5*((max_axial+max_circumferential)+(min_axial+min_circumferential)))
+    elif s31 > s12 and s31 > s23:
+        Ans_max = delta_s31_max
+        Ans_min = delta_s31_min
+        delta_sigma = Ans_max - Ans_min
+        # calculate max, min for mean equivalent stress
+        n_axial = len(drum_prin_struc_axial)
+        n_radial = len(drum_prin_struc_radial)
+        max_axial = max_value_find(drum_prin_struc_axial,n_axial)
+        max_radial = max_value_find(drum_prin_struc_radial,n_radial)
+        min_axial = min_value_find(drum_prin_struc_axial,n_axial)
+        min_radial = min_value_find(drum_prin_struc_radial,n_radial)
+        sigma_mean = pyo.value(0.5*((max_axial+max_circumferential)+(min_axial+min_circumferential)))
+    else:
+        raise Exception("Error occurs, check again!")
+else:
+    Ans_max = max_value_find(data_export,n)
+    Ans_min = min_value_find(data_export,n)
+    # known parameters
+    delta_sigma =  (Ans_max-Ans_min)            # equivalent structural stress range (linear distribution) [N/mm2]
+    sigma_mean =  0.5*(Ans_max+Ans_min)         # mean stress
+
+
+# material properties and operating conditions
+# # drum SA 299
+# delta_sigma_D =  400             # the thermal endurance limit, Table 18.10, EN 13445, page 502
+# delta_sigma_cut = 270            # the cut-off limit, Table 18.10, EN 13445, page 502
+# Rm = (590+620)/2            # Tensile strength [N/mm2]
+# Rp = (330+360)/2            # the yield strength of material
+# T_max = 360                 # the metal temperature during the moment of the highest stress [C]
+# T_min = 310                 # the metal temperature during the moment of lowest stress [C]
+# K_t =  3.0                  # Thermal stress correction factor
+# Rz = 50                     # the peak-to-valley height (micrometer), 50 for machine, 10 for ground, free of notches
+
+# RO = pyo.value(m.fs_main.fs_blr.aDrum.r.last())
+# RI = pyo.value(m.fs_main.fs_blr.aDrum.r.first())
+# drum_thickness = pyo.value(m.fs_main.fs_blr.aDrum.thickness_drum)
+
+# # superheater header
+# delta_sigma_D =  273             # the thermal endurance limit, Table 18.10, EN 13445, page 502
+# delta_sigma_cut = 184            # the cut-off limit, Table 18.10, EN 13445, page 502
+# Rm = 380                    # Tensile strength [N/mm2]
+# Rp = 230                    # the yield strength of material
+# T_max = (727.3282-273.15)                 # the metal temperature during the moment of the highest stress [C]
+# T_min = (714.2341-273.15)                 # the metal temperature during the moment of lowest stress [C]
+# K_t =  3.0                  # Thermal stress correction factor
+# Rz = 50                     # the peak-to-valley height (micrometer), 50 for machine, 10 for ground, free of notches
+
+# RO = (11.376*0.0254+2*1.312*0.0254)/2      # outside radius
+# RI = 11.376*0.0254/2                        # inside radius
+
+
+# Maximum stress calculation
+sigma_max = sigma_mean + 0.5*delta_sigma
+
+# Calculate A0
+if Rm <= 500:
+    A0 = 0.4 # for Rm <= 500 MPa and for all austenitic steels
+elif (Rm>500 and Rm <=800):
+    A0 = 0.4+(Rm-500)/3000
+elif (Rm>800 and Rm <=1000):
+    A0 = 0.5
+
+#calculate k_e
+if delta_sigma > 2*Rp:
+    k_e = 1+A0*(delta_sigma/(2*Rp)-1)               # For other steels
+else:
+    k_e= 1 
+
+# calculate kv
+if delta_sigma > 2*Rp:
+    k_v= max(1, pyo.value(0.7/(0.5+0.4/(delta_sigma/Rp))))      
+else:
+    k_v= 1 
+
+# Equivalent stress range
+"""
+For any component, if the calculated pseudo-elastic structural stress range for both welded joints and unwelded
+parts exceeds twice the yield strength of the material under consideration, i.e. if Δσ eq,l > 2Rp0,2/T* , see note, it shall
+be multiplied by a plasticity correction factor. The correction factor to be applied to the stress range of mechanical
+origin is ke and to the stress range of thermal origin is kν.
+"""
+delta_sigma_eq = delta_sigma * k_e * k_v
+
+# Correction factors
+# Calculate temperature correction factor
+f_T = 1.03 - 1.5E-4*(0.75*T_max+0.25*T_min)-1.5E-6*(0.75*T_max+0.25*T_min)**2     # for other steels
+# f_T = 1.043 - 4.3E-4*(0.75*T_max+0.25*T_min)                                        # for austenitic steels
+
+#initialise N and delta_sigma_R
+delta_sigma_R = 50
+N = 10000
+
+Max_no_of_iterations = 100
+i = 1
+
+while True:
+    #stopping creterion 
+    if i > Max_no_of_iterations:
+        break
+
+    # calcualte effective stress concentration factor
+    if N <= 2e6:
+        K_f = 1+1.5*(K_t-1)/(1+0.5*max(1,(pyo.value(K_t*delta_sigma_eq/delta_sigma_D))))
+    # If N > 2e6: delta_sigma_D = delta_sigma_R
+    else:
+        K_f = 1+1.5*(K_t-1)/(1+0.5*max(1,(pyo.value(K_t*delta_sigma_eq/delta_sigma_R))))
+
+    # calculate effective total stress range
+    delta_sigma_f = K_f * delta_sigma_eq
+
+    # Calculate surface finish correction factor
+    # polished surface withr Rz < 6: f_s = 1
+    # untreated surfaces of deep drawn components and forgings: F_s = 0.25 + 0.75*(1-Rm/1500)**1.8
+    if (N - 2E6) <= 0:
+        f_s = (1 - 0.056*(pyo.log(Rz))**0.64 * pyo.log(Rm) + 0.289*(pyo.log(Rz))**0.53)**(0.1*(pyo.log(N))-0.465)           
+    else:
+        f_s = 1 - 0.056*(pyo.log(Rz))**0.64 * pyo.log(Rm) + 0.289*(pyo.log(Rz))**0.53
+
+    # drum thickness
+    e_n = thickness*1000
+
+    # welding factor
+    # if e_n < 25:
+    #     f_ew = 1
+    # elif (e_n<=150 and e_n>25):
+    #     f_ew = (25/e_n)**0.25
+    # else:
+    #     f_ew = 0.6389
+
+    # Calculate thickness correction factor
+    if e_n < 25:
+        f_e = 1
+    elif (e_n > 25 and (N - 2E6) <= 0):  
+        if (e_n <=150 and e_n>25):  
+            f_e = ((25/e_n)**0.182)**(0.1*(pyo.log(N))-0.465)
+        else:
+            f_e = (1/6)**0.182
+    elif (e_n >25 and (N-2E6)>0):
+        if (e_n<=150 and e_n>25):
+            f_e = (25/e_n)**0.182
+        else:
+            f_e = (1/6)**0.182
+
+    #calculate reduced mean stress correction , Figure 18.6 in page 470, EN 13445
+    
+    if (delta_sigma <= 2*Rp and abs(sigma_max) > Rp):
+        if (sigma_mean > 0):
+            sigma_mean_r = Rp - 0.5*sigma_mean
+        else:
+            sigma_mean_r = 0.5*sigma_mean - Rp
+    elif (delta_sigma <= 2*Rp and abs(sigma_max) < Rp) :
+        sigma_mean_r = sigma_mean
+    else:
+        sigma_mean_r = 0
+        f_m = 1
+
+    # calculate mean stress sensitivity
+    M = 0.00035*Rm-0.1  
+
+    #calculat A1
+    A1 = delta_sigma_R/(2*(1+M))
+
+    # calculate full mean stress correction factor
+    if N <= 2e6:
+        if (-Rp <= sigma_mean_r and sigma_mean_r <= A1):
+            f_m = pyo.sqrt(1-M*(2+M)/(1+M)*(2*sigma_mean_r/delta_sigma_R))
+        elif (A1 < sigma_mean_r and sigma_mean_r <= Rp):
+            f_m = (1+M/3)/(1+M) - M/3*(2*sigma_mean_r/delta_sigma_R)
+        else:
+            f_m =1
+    # If N >= 2e6, replace delta_sigma_R by delta_sigma_D
+    else: 
+        if (-Rp <= sigma_mean_r and sigma_mean_r <= A1):
+            f_m = pyo.sqrt(1-M*(2+M)/(1+M)*(2*sigma_mean_r/delta_sigma_D))
+        elif (A1 < sigma_mean_r and sigma_mean_r <= Rp):
+            f_m = (1+M/3)/(1+M) - M/3*(2*sigma_mean_r/delta_sigma_D)
+        else:
+            f_m =1
+
+    # Calculate overall correction factor # f_u=f_T*f_s*f_e*f_m
+    f_u = f_T * f_s * f_e * f_m
+
+    # print('value f_T = {}, f_s = {}, f_e = {}, f_m = {}, f_u = {}'.format(f_T,f_s,f_e,f_m,f_u))
+
+    # calculate delta signma R new 
+    delta_sigma_R_new = delta_sigma_f/f_u
+
+    # calculate N new
+    if delta_sigma_R_new > delta_sigma_D:
+        N_new = (46000/(delta_sigma_R_new-0.63*Rm + 11.5))**2
+    elif delta_sigma_R_new < delta_sigma_D:
+        N_new = ((2.69*Rm+89.72)/delta_sigma_R_new)**10
+    elif (delta_sigma_R_new <= delta_sigma_cut):
+        N_new = np.inf   
+
+    #stopping creterion 
+    if abs(N-N_new) <= 1e-7:
+        break
+    
+    #update delta_sigma_R and N
+    delta_sigma_R  = delta_sigma_R_new 
+    N = N_new
+    i =i+1
+    print('iteration no ={},N={},delta_sigma_R={}'.format(i,N,delta_sigma_R))
+
+print('cycles =',int(N))
+print('stress range =', pyo.value(delta_sigma))
+print('sigma_mean =', pyo.value(sigma_mean))
+
+    return m
